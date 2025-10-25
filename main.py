@@ -169,28 +169,39 @@ async def on_ready():
         await channel.send(embed=embed, view=view)
         print(f"Ticket button sent to channel {TICKET_CHANNEL_ID}")
     
-    reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
-    if reaction_role_channel:
-        try:
-            old_message = await reaction_role_channel.fetch_message(REACTION_ROLE_MESSAGE_ID)
-            embed = old_message.embeds[0] if old_message.embeds else None
-            content = old_message.content
-            
-            await old_message.delete()
-            print(f"Deleted old reaction role message {REACTION_ROLE_MESSAGE_ID}")
-            
-            if embed:
-                new_message = await reaction_role_channel.send(content=content, embed=embed)
-            else:
-                new_message = await reaction_role_channel.send(content=content)
-            
-            await new_message.add_reaction(REACTION_ROLE_EMOJI)
-            reaction_roles[(new_message.id, REACTION_ROLE_EMOJI)] = REACTION_ROLE_ID
-            print(f"Resent reaction role message with ID {new_message.id} and added reaction role")
-        except discord.NotFound:
-            print(f"Reaction role message {REACTION_ROLE_MESSAGE_ID} not found")
-        except Exception as e:
-            print(f"Error resending reaction role message: {e}")
+   reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
+if reaction_role_channel:
+    try:
+        # Try to fetch an existing message that matches our welcome content
+        messages = await reaction_role_channel.history(limit=50).flatten()
+        target_message = None
+        for msg in messages:
+            if msg.author == bot.user and "Welcome and thank you for joining Greenville Roleplay Prism!" in msg.content:
+                target_message = msg
+                break
+
+        # If we find the message, delete it (optional) or just reuse
+        if target_message:
+            await target_message.delete()
+            print(f"Deleted old reaction role message {target_message.id}")
+
+        # Send new message
+        new_message = await reaction_role_channel.send(
+            "Welcome and thank you for joining Greenville Roleplay Prism!\nTo verify - react below!"
+        )
+
+        # Add the reaction role emoji
+        await new_message.add_reaction(REACTION_ROLE_EMOJI)
+
+        # Store in dictionary for reaction handling
+        reaction_roles[(new_message.id, REACTION_ROLE_EMOJI)] = REACTION_ROLE_ID
+
+        print(f"Sent new reaction role message with ID {new_message.id} and added reaction role")
+
+    except discord.NotFound:
+        print(f"Reaction role channel {REACTION_ROLE_CHANNEL_ID} or message not found")
+    except Exception as e:
+        print(f"Error creating reaction role message: {e}")
 
 @bot.event
 async def on_member_join(member):
@@ -1761,3 +1772,4 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
