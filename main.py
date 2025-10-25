@@ -87,8 +87,7 @@ async def check_inactive_tickets():
             ticket_category = bot.get_channel(TICKET_CATEGORY_ID)
             
             if ticket_category:
-                import datetime
-                now = datetime.datetime.now(datetime.timezone.utc)
+                now = datetime.now(datetime.timezone.utc)
                 
                 for channel in ticket_category.channels:
                     if channel.id in ticket_last_activity:
@@ -111,6 +110,7 @@ async def check_inactive_tickets():
         
         await asyncio.sleep(3600)
 
+
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
@@ -125,6 +125,7 @@ async def on_ready():
     
     channel = bot.get_channel(TICKET_CHANNEL_ID)
     if channel:
+        # Clean up old ticket button messages
         async for message in channel.history(limit=50):
             if message.author == bot.user and message.embeds:
                 for embed in message.embeds:
@@ -132,17 +133,76 @@ async def on_ready():
                         await message.delete()
                         print(f"Deleted old ticket button")
         
+        # Create the ticket button
         embed = discord.Embed(
             title="Create a Ticket",
             description="Press the button below to create a ticket.",
             color=discord.Color.orange()
         )
         button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
-        # ... your ticket button callback code ...
+
+        async def button_callback(interaction):
+            guild = interaction.guild
+            category = guild.get_channel(TICKET_CATEGORY_ID)
+            
+            # Only allow ticket creator + staff to see the ticket
+            ticket_overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+                guild.get_role(1429050967881416757): discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            }
+            
+            ticket_channel = await guild.create_text_channel(
+                name=f"ticket-{interaction.user.name}",
+                category=category,
+                overwrites=ticket_overwrites
+            )
+            
+            ticket_last_activity[ticket_channel.id] = datetime.now(datetime.timezone.utc)
+            
+            await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!")
+            
+            if STAFF_LOG_CHANNEL_ID:
+                log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+                await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
+            
+            await interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+
+        button.callback = button_callback
         view = View(timeout=None)
         view.add_item(button)
         await channel.send(embed=embed, view=view)
         print(f"Ticket button sent to channel {TICKET_CHANNEL_ID}")
+
+
+# Close ticket command
+@bot.command()
+async def close(ctx):
+    staff_role = ctx.guild.get_role(STAFF_ROLE_ID)
+    if staff_role not in ctx.author.roles:
+        await ctx.send("❌ You don't have permission to close tickets.")
+        return
+
+    if not ctx.channel.category or ctx.channel.category.id != TICKET_CATEGORY_ID:
+        await ctx.send("❌ This command can only be used in a ticket channel.")
+        return
+
+    await ctx.send("🔒 Closing ticket in 3 seconds...")
+    await asyncio.sleep(3)
+    await ctx.channel.delete()
+    if ctx.channel.id in ticket_last_activity:
+        del ticket_last_activity[ctx.channel.id]
+
+
+# Ticket add user command
+@bot.command()
+async def ticketadd(ctx, member: discord.Member):
+    if ctx.channel.category_id != TICKET_CATEGORY_ID:
+        await ctx.send("❌ This command can only be used in a ticket channel.")
+        return
+
+    await ctx.channel.set_permissions(member, view_channel=True, send_messages=True)
+    await ctx.send(f"✓ {member.mention} can now see this ticket.")
 
     # ---- REACTION ROLE CODE ----
     reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
