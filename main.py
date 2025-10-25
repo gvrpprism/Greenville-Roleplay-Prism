@@ -476,8 +476,8 @@ async def ticketbutton(ctx):
     await channel.send(embed=embed, view=view)
     await ctx.send("✓ Ticket button sent!", delete_after=3)
 
-@bot.command()
-async def close(ctx):
+@bot.command(name="ticketclose")
+async def ticketclose(ctx):
     staff_role = ctx.guild.get_role(STAFF_ROLE_ID)
     if staff_role not in ctx.author.roles:
         await ctx.send("❌ You don't have permission to close tickets.")
@@ -1800,3 +1800,4 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
