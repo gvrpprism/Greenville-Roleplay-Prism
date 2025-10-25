@@ -138,71 +138,39 @@ async def on_ready():
             color=discord.Color.orange()
         )
         button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
-
-        async def button_callback(interaction):
-            modal = Modal(title="Ticket Reason")
-            reason_input = TextInput(label="Reason", placeholder="Why are you opening this ticket?")
-            modal.add_item(reason_input)
-
-            async def modal_callback(modal_interaction):
-                import datetime
-                guild = interaction.guild
-                category = guild.get_channel(TICKET_CATEGORY_ID)
-                ticket_channel = await guild.create_text_channel(
-                    name=f"ticket-{interaction.user.name}",
-                    category=category
-                )
-                
-                ticket_last_activity[ticket_channel.id] = datetime.datetime.now(datetime.timezone.utc)
-                await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}")
-                if STAFF_LOG_CHANNEL_ID:
-                    log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
-                    await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
-                await modal_interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
-
-            modal.on_submit = modal_callback
-            await interaction.response.send_modal(modal)
-
-        button.callback = button_callback
+        # ... your ticket button callback code ...
         view = View(timeout=None)
         view.add_item(button)
         await channel.send(embed=embed, view=view)
         print(f"Ticket button sent to channel {TICKET_CHANNEL_ID}")
-    
-   reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
-if reaction_role_channel:
-    try:
-        # Try to fetch an existing message that matches our welcome content
-        messages = await reaction_role_channel.history(limit=50).flatten()
-        target_message = None
-        for msg in messages:
-            if msg.author == bot.user and "Welcome and thank you for joining Greenville Roleplay Prism!" in msg.content:
-                target_message = msg
-                break
 
-        # If we find the message, delete it (optional) or just reuse
-        if target_message:
-            await target_message.delete()
-            print(f"Deleted old reaction role message {target_message.id}")
+    # ---- REACTION ROLE CODE ----
+    reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
+    if reaction_role_channel:
+        try:
+            messages = await reaction_role_channel.history(limit=50).flatten()
+            target_message = None
+            for msg in messages:
+                if msg.author == bot.user and "Welcome and thank you for joining Greenville Roleplay Prism!" in msg.content:
+                    target_message = msg
+                    break
 
-        # Send new message
-        new_message = await reaction_role_channel.send(
-            "Welcome and thank you for joining Greenville Roleplay Prism!\nTo verify - react below!"
-        )
+            if target_message:
+                await target_message.delete()
+                print(f"Deleted old reaction role message {target_message.id}")
 
-        # Add the reaction role emoji
-        await new_message.add_reaction(REACTION_ROLE_EMOJI)
+            new_message = await reaction_role_channel.send(
+                "Welcome and thank you for joining Greenville Roleplay Prism!\nTo verify - react below!"
+            )
 
-        # Store in dictionary for reaction handling
-        reaction_roles[(new_message.id, REACTION_ROLE_EMOJI)] = REACTION_ROLE_ID
+            await new_message.add_reaction(REACTION_ROLE_EMOJI)
+            reaction_roles[(new_message.id, REACTION_ROLE_EMOJI)] = REACTION_ROLE_ID
+            print(f"Sent new reaction role message with ID {new_message.id} and added reaction role")
 
-        print(f"Sent new reaction role message with ID {new_message.id} and added reaction role")
-
-    except discord.NotFound:
-        print(f"Reaction role channel {REACTION_ROLE_CHANNEL_ID} or message not found")
-    except Exception as e:
-        print(f"Error creating reaction role message: {e}")
-
+        except discord.NotFound:
+            print(f"Reaction role channel {REACTION_ROLE_CHANNEL_ID} or message not found")
+        except Exception as e:
+            print(f"Error creating reaction role message: {e}")
 @bot.event
 async def on_member_join(member):
     if member.bot:
@@ -1772,4 +1740,3 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
-
