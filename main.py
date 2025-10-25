@@ -444,79 +444,6 @@ async def type(ctx, channel: discord.TextChannel, *, message):
     await ctx.send(f"✓ Message sent to {channel.mention}!", delete_after=3)
 
 @bot.command()
-async def ticketbutton(ctx):
-    channel = bot.get_channel(TICKET_CHANNEL_ID)
-    embed = discord.Embed(
-        title="Create a Ticket",
-        description="Press the button below to create a ticket.",
-        color=discord.Color.orange()
-    )
-    button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
-    async def button_callback(interaction):
-        modal = Modal(title="Ticket Reason")
-        reason_input = TextInput(label="Reason", placeholder="Why are you opening this ticket?")
-        modal.add_item(reason_input)
-
-        async def modal_callback(modal_interaction):
-            import datetime
-            guild = interaction.guild
-            category = guild.get_channel(TICKET_CATEGORY_ID)
-            ticket_channel = await guild.create_text_channel(
-                name=f"ticket-{interaction.user.name}",
-                category=category
-            )
-            
-            ticket_last_activity[ticket_channel.id] = datetime.datetime.now(datetime.timezone.utc)
-            
-            await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}")
-            if STAFF_LOG_CHANNEL_ID:
-                log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
-                await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
-            await modal_interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
-
-        modal.on_submit = modal_callback
-        await interaction.response.send_modal(modal)
-
-    button.callback = button_callback
-    view = View(timeout=None)
-    view.add_item(button)
-    await channel.send(embed=embed, view=view)
-    await ctx.send("✓ Ticket button sent!", delete_after=3)
-
-@bot.command(name="ticketclose")
-async def ticketclose(ctx):
-    staff_role = ctx.guild.get_role(STAFF_ROLE_ID)
-    if staff_role not in ctx.author.roles:
-        await ctx.send("❌ You don't have permission to close tickets.")
-        return
-    
-    if not ctx.channel.category or ctx.channel.category.id != TICKET_CATEGORY_ID:
-        await ctx.send("❌ This command can only be used in a ticket channel.")
-        return
-    
-    await ctx.send("🔒 Closing ticket in 3 seconds...")
-    
-    if STAFF_LOG_CHANNEL_ID:
-        try:
-            log_channel = ctx.guild.get_channel(STAFF_LOG_CHANNEL_ID)
-            messages = [m async for m in ctx.channel.history(limit=100)]
-            history_text = "\n".join([f"{m.author}: {m.content}" for m in reversed(messages)])
-            await log_channel.send(f"Ticket {ctx.channel.name} closed by {ctx.author}. History:\n```{history_text[:1900]}```")
-        except:
-            pass
-    
-    if ctx.channel.id in ticket_last_activity:
-        del ticket_last_activity[ctx.channel.id]
-    if ctx.channel.id in ticket_warnings_sent:
-        del ticket_warnings_sent[ctx.channel.id]
-    
-    await asyncio.sleep(3)
-    try:
-        await ctx.channel.delete()
-    except:
-        pass
-
-@bot.command()
 async def timeout(ctx, member: discord.Member, duration: int, *, reason: str = "No reason provided"):
     staff_role = ctx.guild.get_role(STAFF_ROLE_ID)
     if staff_role not in ctx.author.roles:
@@ -1807,6 +1734,7 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
 
 
 
