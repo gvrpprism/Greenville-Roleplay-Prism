@@ -1,22 +1,19 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
+from discord.ui import Button, View, Modal, TextInput
 from PIL import Image, ImageDraw, ImageFont
 import os
 from flask import Flask
 from threading import Thread
 from io import BytesIO
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, datetime
 import asyncio
 import random
 import json
 import re
 
-# ========================
-# IDs and constants
-# ========================
 ANNOUNCEMENTS_CHANNEL_ID = 1429028560168816681
-TICKET_CATEGORY_ID = None  # Tickets are NOT in a category
+TICKET_CATEGORY_ID = 1429030149516427274
 TICKET_CHANNEL_ID = 1429030206689120306
 STAFF_LOG_CHANNEL_ID = 1429052870371835944
 WELCOME_CHANNEL_ID = 1429040704486637599
@@ -42,29 +39,32 @@ REACTION_ROLE_MESSAGE_ID = 1429892266616553582
 REACTION_ROLE_EMOJI = "✅"
 REACTION_ROLE_ID = 1429032286623498240
 
-TICKET_ACCESS_ROLE_ID = 1429050967881416757  # Staff role that can see all tickets and close them
-
 TOKEN = os.environ.get('DISCORD_BOT_TOKEN') or os.environ.get('TOKEN')
 
-# ========================
-# Bot setup
-# ========================
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='?', intents=intents)
 bot.remove_command('help')
 
-# ========================
-# Globals
-# ========================
+session_message_id = None
+session_cohosts = []
+latest_startup_message_id = None
+latest_startup_host_id = None
+active_applications = {}
+active_giveaways = {}
+user_warnings = {}
 ticket_last_activity = {}
-ticket_extra_viewers = {}
-ticket_warnings_sent = {}
 
-EET = timezone(timedelta(hours=2))  # UTC+2 timezone
+user_levels = {}
+user_economy = {}
+reaction_roles = {}
+starboard_messages = {}
+user_afk = {}
+active_polls = {}
+suggestion_counter = 0
+bad_words = ['badword1', 'badword2']
+STARBOARD_CHANNEL_ID = None
+SUGGESTION_CHANNEL_ID = None
 
-# ========================
-# Flask uptime server
-# ========================
 app = Flask('')
 
 @app.route('/')
@@ -76,168 +76,122 @@ def run():
 
 Thread(target=run).start()
 
-# ========================
-# Ticket activity checker
-# ========================
+ticket_warnings_sent = {}
+
 async def check_inactive_tickets():
     """Check for tickets with no activity for 5 hours"""
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            now = datetime.now(EET)
-            for channel_id, last_activity in list(ticket_last_activity.items()):
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    time_since = now - last_activity
-                    if time_since >= timedelta(hours=5):
-                        if channel_id not in ticket_warnings_sent:
-                            embed = discord.Embed(
-                                title="⏰ Inactive Ticket",
-                                description="This ticket has been inactive for 5 hours. React with ✅ to close it.",
-                                color=discord.Color.orange()
-                            )
-                            msg = await channel.send(embed=embed)
-                            await msg.add_reaction("✅")
-                            ticket_warnings_sent[channel_id] = now
+            guild = bot.guilds[0]
+            ticket_category = bot.get_channel(TICKET_CATEGORY_ID)
+            
+            if ticket_category:
+                import datetime
+                now = datetime.datetime.now(datetime.timezone.utc)
+                
+                for channel in ticket_category.channels:
+                    if channel.id in ticket_last_activity:
+                        last_activity = ticket_last_activity[channel.id]
+                        time_since_activity = now - last_activity
+                        
+                        if time_since_activity >= timedelta(hours=5):
+                            if channel.id not in ticket_warnings_sent:
+                                embed = discord.Embed(
+                                    title="⏰ Inactive Ticket",
+                                    description="This ticket has been inactive for 5 hours. Should it be closed?\n\nReact with ✅ to close this ticket.",
+                                    color=discord.Color.orange()
+                                )
+                                message = await channel.send(embed=embed)
+                                await message.add_reaction("✅")
+                                
+                                ticket_warnings_sent[channel.id] = now
         except Exception as e:
             print(f"Error checking inactive tickets: {e}")
+        
         await asyncio.sleep(3600)
 
-# ========================
-# Bot events
-# ========================
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
+    print(f'Logged in as {bot.user}')
+    
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
-    bot.loop.create_task(check_inactive_tickets())
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    if message.channel.name.startswith("ticket-"):
-        ticket_last_activity[message.channel.id] = datetime.now(EET)
-    await bot.process_commands(message)
-
-# ========================
-# Ticket System Commands
-# ========================
-@bot.command()
-async def ticketbutton(ctx):
-    """Send the ticket creation button"""
-    channel = bot.get_channel(TICKET_CHANNEL_ID)
-    if not channel:
-        await ctx.send("❌ Ticket channel not found.")
-        return
-
-    embed = discord.Embed(
-        title="🎟️ Create a Ticket",
-        description="Click the button below to create a support ticket.",
-        color=discord.Color.orange()
-    )
-    button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
-
-    async def button_callback(interaction):
-        guild = interaction.guild
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-            guild.get_role(TICKET_ACCESS_ROLE_ID): discord.PermissionOverwrite(view_channel=True, send_messages=True)
-        }
-
-        ticket_channel = await guild.create_text_channel(
-            name=f"ticket-{interaction.user.name}".replace(" ", "-").lower(),
-            overwrites=overwrites,
-            reason=f"Ticket created by {interaction.user}"
-        )
-
-        ticket_last_activity[ticket_channel.id] = datetime.now(EET)
-        ticket_extra_viewers[ticket_channel.id] = set()
-
-        await ticket_channel.send(
-            f"🎫 {interaction.user.mention} created a ticket! <@&{TICKET_ACCESS_ROLE_ID}> will assist you soon."
-        )
-
-        if STAFF_LOG_CHANNEL_ID:
-            log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
-            if log_channel:
-                await log_channel.send(f"Ticket created by {interaction.user} → {ticket_channel.mention}")
-
-        await interaction.response.send_message(
-            f"✅ Ticket created successfully: {ticket_channel.mention}", ephemeral=True
-        )
-
-    button.callback = button_callback
-    view = View(timeout=None)
-    view.add_item(button)
-    await channel.send(embed=embed, view=view)
-    await ctx.send("✅ Ticket button sent!", delete_after=5)
-
-
-@bot.command(name="ticketclose")
-async def ticketclose(ctx):
-    """Close the current ticket"""
-    staff_role = ctx.guild.get_role(TICKET_ACCESS_ROLE_ID)
-    if staff_role not in ctx.author.roles:
-        await ctx.send("❌ You don't have permission to close this ticket.")
-        return
-
-    if not ctx.channel.name.startswith("ticket-"):
-        await ctx.send("❌ This command can only be used in a ticket channel.")
-        return
-
-    await ctx.send("🔒 Closing this ticket in 3 seconds...")
-    await asyncio.sleep(3)
-    await ctx.channel.delete()
-    ticket_last_activity.pop(ctx.channel.id, None)
-    ticket_extra_viewers.pop(ctx.channel.id, None)
-    ticket_warnings_sent.pop(ctx.channel.id, None)
-
-
-@bot.command(name="ticketadd")
-async def ticketadd(ctx, member: discord.Member):
-    """Add a user to this ticket"""
-    if not ctx.channel.name.startswith("ticket-"):
-        await ctx.send("❌ This command can only be used inside a ticket channel.")
-        return
-
-    await ctx.channel.set_permissions(member, view_channel=True, send_messages=True)
-    ticket_extra_viewers.setdefault(ctx.channel.id, set()).add(member.id)
-    await ctx.send(f"✅ {member.mention} has been added to this ticket and can now send messages.")
     
-    # ---- REACTION ROLE CODE ----
+    bot.loop.create_task(check_inactive_tickets())
+    
+    channel = bot.get_channel(TICKET_CHANNEL_ID)
+    if channel:
+        async for message in channel.history(limit=50):
+            if message.author == bot.user and message.embeds:
+                for embed in message.embeds:
+                    if embed.title == "Create a Ticket":
+                        await message.delete()
+                        print(f"Deleted old ticket button")
+        
+        embed = discord.Embed(
+            title="Create a Ticket",
+            description="Press the button below to create a ticket.",
+            color=discord.Color.orange()
+        )
+        button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
+
+        async def button_callback(interaction):
+            modal = Modal(title="Ticket Reason")
+            reason_input = TextInput(label="Reason", placeholder="Why are you opening this ticket?")
+            modal.add_item(reason_input)
+
+            async def modal_callback(modal_interaction):
+                import datetime
+                guild = interaction.guild
+                category = guild.get_channel(TICKET_CATEGORY_ID)
+                ticket_channel = await guild.create_text_channel(
+                    name=f"ticket-{interaction.user.name}",
+                    category=category
+                )
+                
+                ticket_last_activity[ticket_channel.id] = datetime.datetime.now(datetime.timezone.utc)
+                await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}")
+                if STAFF_LOG_CHANNEL_ID:
+                    log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+                    await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
+                await modal_interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+
+            modal.on_submit = modal_callback
+            await interaction.response.send_modal(modal)
+
+        button.callback = button_callback
+        view = View(timeout=None)
+        view.add_item(button)
+        await channel.send(embed=embed, view=view)
+        print(f"Ticket button sent to channel {TICKET_CHANNEL_ID}")
+    
     reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
     if reaction_role_channel:
         try:
-            messages = await reaction_role_channel.history(limit=50).flatten()
-            target_message = None
-            for msg in messages:
-                if msg.author == bot.user and "Welcome and thank you for joining Greenville Roleplay Prism!" in msg.content:
-                    target_message = msg
-                    break
-
-            if target_message:
-                await target_message.delete()
-                print(f"Deleted old reaction role message {target_message.id}")
-
-            new_message = await reaction_role_channel.send(
-                "Welcome and thank you for joining Greenville Roleplay Prism!\nTo verify - react below!"
-            )
-
+            old_message = await reaction_role_channel.fetch_message(REACTION_ROLE_MESSAGE_ID)
+            embed = old_message.embeds[0] if old_message.embeds else None
+            content = old_message.content
+            
+            await old_message.delete()
+            print(f"Deleted old reaction role message {REACTION_ROLE_MESSAGE_ID}")
+            
+            if embed:
+                new_message = await reaction_role_channel.send(content=content, embed=embed)
+            else:
+                new_message = await reaction_role_channel.send(content=content)
+            
             await new_message.add_reaction(REACTION_ROLE_EMOJI)
             reaction_roles[(new_message.id, REACTION_ROLE_EMOJI)] = REACTION_ROLE_ID
-            print(f"Sent new reaction role message with ID {new_message.id} and added reaction role")
-
+            print(f"Resent reaction role message with ID {new_message.id} and added reaction role")
         except discord.NotFound:
-            print(f"Reaction role channel {REACTION_ROLE_CHANNEL_ID} or message not found")
+            print(f"Reaction role message {REACTION_ROLE_MESSAGE_ID} not found")
         except Exception as e:
-            print(f"Error creating reaction role message: {e}")
+            print(f"Error resending reaction role message: {e}")
+
 @bot.event
 async def on_member_join(member):
     if member.bot:
@@ -442,6 +396,79 @@ async def announce(ctx, *, message):
 async def type(ctx, channel: discord.TextChannel, *, message):
     await channel.send(message)
     await ctx.send(f"✓ Message sent to {channel.mention}!", delete_after=3)
+
+@bot.command()
+async def ticketbutton(ctx):
+    channel = bot.get_channel(TICKET_CHANNEL_ID)
+    embed = discord.Embed(
+        title="Create a Ticket",
+        description="Press the button below to create a ticket.",
+        color=discord.Color.orange()
+    )
+    button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
+    async def button_callback(interaction):
+        modal = Modal(title="Ticket Reason")
+        reason_input = TextInput(label="Reason", placeholder="Why are you opening this ticket?")
+        modal.add_item(reason_input)
+
+        async def modal_callback(modal_interaction):
+            import datetime
+            guild = interaction.guild
+            category = guild.get_channel(TICKET_CATEGORY_ID)
+            ticket_channel = await guild.create_text_channel(
+                name=f"ticket-{interaction.user.name}",
+                category=category
+            )
+            
+            ticket_last_activity[ticket_channel.id] = datetime.datetime.now(datetime.timezone.utc)
+            
+            await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}")
+            if STAFF_LOG_CHANNEL_ID:
+                log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+                await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
+            await modal_interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+
+        modal.on_submit = modal_callback
+        await interaction.response.send_modal(modal)
+
+    button.callback = button_callback
+    view = View(timeout=None)
+    view.add_item(button)
+    await channel.send(embed=embed, view=view)
+    await ctx.send("✓ Ticket button sent!", delete_after=3)
+
+@bot.command()
+async def close(ctx):
+    staff_role = ctx.guild.get_role(STAFF_ROLE_ID)
+    if staff_role not in ctx.author.roles:
+        await ctx.send("❌ You don't have permission to close tickets.")
+        return
+    
+    if not ctx.channel.category or ctx.channel.category.id != TICKET_CATEGORY_ID:
+        await ctx.send("❌ This command can only be used in a ticket channel.")
+        return
+    
+    await ctx.send("🔒 Closing ticket in 3 seconds...")
+    
+    if STAFF_LOG_CHANNEL_ID:
+        try:
+            log_channel = ctx.guild.get_channel(STAFF_LOG_CHANNEL_ID)
+            messages = [m async for m in ctx.channel.history(limit=100)]
+            history_text = "\n".join([f"{m.author}: {m.content}" for m in reversed(messages)])
+            await log_channel.send(f"Ticket {ctx.channel.name} closed by {ctx.author}. History:\n```{history_text[:1900]}```")
+        except:
+            pass
+    
+    if ctx.channel.id in ticket_last_activity:
+        del ticket_last_activity[ctx.channel.id]
+    if ctx.channel.id in ticket_warnings_sent:
+        del ticket_warnings_sent[ctx.channel.id]
+    
+    await asyncio.sleep(3)
+    try:
+        await ctx.channel.delete()
+    except:
+        pass
 
 @bot.command()
 async def timeout(ctx, member: discord.Member, duration: int, *, reason: str = "No reason provided"):
@@ -1734,10 +1761,3 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
-
-
-
-
-
-
-
