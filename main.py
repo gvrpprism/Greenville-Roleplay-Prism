@@ -18,6 +18,7 @@ TICKET_CHANNEL_ID = 1429030206689120306
 STAFF_LOG_CHANNEL_ID = 1429052870371835944
 WELCOME_CHANNEL_ID = 1429040704486637599
 STAFF_ROLE_ID = 1429035155158208532
+TICKET_STAFF_ROLE_ID = 1429050967881416757
 BANNER_IMAGE_PATH = "GreenvilleSpringUpdateBanner(2025)(1).png"
 
 WARNING_ROLE_1 = 1429197544499576903
@@ -45,25 +46,8 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='?', intents=intents)
 bot.remove_command('help')
 
-session_message_id = None
-session_cohosts = []
-latest_startup_message_id = None
-latest_startup_host_id = None
-active_applications = {}
-active_giveaways = {}
-user_warnings = {}
 ticket_last_activity = {}
-
-user_levels = {}
-user_economy = {}
-reaction_roles = {}
-starboard_messages = {}
-user_afk = {}
-active_polls = {}
-suggestion_counter = 0
-bad_words = ['badword1', 'badword2']
-STARBOARD_CHANNEL_ID = None
-SUGGESTION_CHANNEL_ID = None
+ticket_warnings_sent = {}
 
 app = Flask('')
 
@@ -76,10 +60,7 @@ def run():
 
 Thread(target=run).start()
 
-ticket_warnings_sent = {}
-
 async def check_inactive_tickets():
-    """Check for tickets with no activity for 5 hours"""
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
@@ -87,8 +68,7 @@ async def check_inactive_tickets():
             ticket_category = bot.get_channel(TICKET_CATEGORY_ID)
             
             if ticket_category:
-                import datetime
-                now = datetime.datetime.now(datetime.timezone.utc)
+                now = datetime.now(datetime.timezone.utc)
                 
                 for channel in ticket_category.channels:
                     if channel.id in ticket_last_activity:
@@ -145,19 +125,30 @@ async def on_ready():
             modal.add_item(reason_input)
 
             async def modal_callback(modal_interaction):
-                import datetime
                 guild = interaction.guild
                 category = guild.get_channel(TICKET_CATEGORY_ID)
+                
+                # Create ticket channel with permissions
                 ticket_channel = await guild.create_text_channel(
                     name=f"ticket-{interaction.user.name}",
-                    category=category
+                    category=category,
+                    overwrites={
+                        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+                        guild.get_role(TICKET_STAFF_ROLE_ID): discord.PermissionOverwrite(view_channel=True, send_messages=True)
+                    }
                 )
                 
-                ticket_last_activity[ticket_channel.id] = datetime.datetime.now(datetime.timezone.utc)
-                await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}")
+                ticket_last_activity[ticket_channel.id] = datetime.now(datetime.timezone.utc)
+                
+                await ticket_channel.send(
+                    f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}"
+                )
+                
                 if STAFF_LOG_CHANNEL_ID:
                     log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
                     await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
+                
                 await modal_interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
 
             modal.on_submit = modal_callback
@@ -168,6 +159,19 @@ async def on_ready():
         view.add_item(button)
         await channel.send(embed=embed, view=view)
         print(f"Ticket button sent to channel {TICKET_CHANNEL_ID}")
+
+# Close command: only ticket creator or ticket staff role can close
+@bot.command()
+async def close(ctx):
+    if ctx.channel.name.startswith("ticket-"):
+        creator_name = ctx.channel.name.replace("ticket-", "")
+        staff_role = ctx.guild.get_role(TICKET_STAFF_ROLE_ID)
+        if ctx.author.name == creator_name or staff_role in ctx.author.roles:
+            await ctx.channel.delete()
+        else:
+            await ctx.send("You do not have permission to close this ticket.", delete_after=10)
+    else:
+        await ctx.send("This command can only be used in ticket channels.", delete_after=10)
     
     reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
     if reaction_role_channel:
@@ -1761,4 +1765,5 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
 
