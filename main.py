@@ -160,18 +160,6 @@ async def on_ready():
         await channel.send(embed=embed, view=view)
         print(f"Ticket button sent to channel {TICKET_CHANNEL_ID}")
 
-# Close command: only ticket creator or ticket staff role can close
-@bot.command()
-async def close(ctx):
-    if ctx.channel.name.startswith("ticket-"):
-        creator_name = ctx.channel.name.replace("ticket-", "")
-        staff_role = ctx.guild.get_role(TICKET_STAFF_ROLE_ID)
-        if ctx.author.name == creator_name or staff_role in ctx.author.roles:
-            await ctx.channel.delete()
-        else:
-            await ctx.send("You do not have permission to close this ticket.", delete_after=10)
-    else:
-        await ctx.send("This command can only be used in ticket channels.", delete_after=10)
     
     reaction_role_channel = bot.get_channel(REACTION_ROLE_CHANNEL_ID)
     if reaction_role_channel:
@@ -403,6 +391,7 @@ async def type(ctx, channel: discord.TextChannel, *, message):
 
 @bot.command()
 async def ticketbutton(ctx):
+    """Send the 'Create Ticket' button to TICKET_CHANNEL_ID"""
     channel = bot.get_channel(TICKET_CHANNEL_ID)
     embed = discord.Embed(
         title="Create a Ticket",
@@ -410,27 +399,86 @@ async def ticketbutton(ctx):
         color=discord.Color.orange()
     )
     button = Button(label="Create Ticket", style=discord.ButtonStyle.green)
+
     async def button_callback(interaction):
         modal = Modal(title="Ticket Reason")
         reason_input = TextInput(label="Reason", placeholder="Why are you opening this ticket?")
         modal.add_item(reason_input)
 
         async def modal_callback(modal_interaction):
-            import datetime
             guild = interaction.guild
             category = guild.get_channel(TICKET_CATEGORY_ID)
+            staff_role = guild.get_role(TICKET_STAFF_ROLE_ID)
+
+            # Create ticket channel with restricted permissions
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                modal_interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+                staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+            }
+
             ticket_channel = await guild.create_text_channel(
-                name=f"ticket-{interaction.user.name}",
-                category=category
+                name=f"ticket-{modal_interaction.user.name}",
+                category=category,
+                overwrites=overwrites
             )
-            
-            ticket_last_activity[ticket_channel.id] = datetime.datetime.now(datetime.timezone.utc)
-            
-            await ticket_channel.send(f"<@&{STAFF_ROLE_ID}> {interaction.user.mention} created a ticket!\nReason: {reason_input.value}")
+
+            ticket_last_activity[ticket_channel.id] = datetime.now()
+
+            # Embed inside the ticket
+            ticket_embed = discord.Embed(
+                title="🎫 Ticket Created",
+                description=f"{modal_interaction.user.mention} created this ticket.\nReason: **{reason_input.value}**",
+                color=discord.Color.orange()
+            )
+
+            # Close button
+            class CloseButton(View):
+                def __init__(self, creator):
+                    super().__init__(timeout=None)
+                    self.creator = creator
+
+                @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.red)
+                async def close_ticket(self, button_interaction: discord.Interaction, button: Button):
+                    if button_interaction.user != self.creator and staff_role not in button_interaction.user.roles:
+                        await button_interaction.response.send_message(
+                            "❌ You don’t have permission to close this ticket.", ephemeral=True
+                        )
+                        return
+
+                    close_modal = Modal(title="Close Ticket Reason")
+                    close_reason = TextInput(label="Reason for closing", placeholder="Enter a reason...")
+                    close_modal.add_item(close_reason)
+
+                    async def close_submit(close_inter):
+                        # Log history
+                        if STAFF_LOG_CHANNEL_ID:
+                            log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+                            messages = [m async for m in ticket_channel.history(limit=100)]
+                            history_text = "\n".join([f"{m.author}: {m.content}" for m in reversed(messages)])
+                            await log_channel.send(
+                                f"Ticket {ticket_channel.name} closed by {close_inter.user}.\n"
+                                f"Reason: {close_reason.value}\nHistory:\n```{history_text[:1900]}```"
+                            )
+
+                        await close_inter.response.send_message("✅ Ticket will close in 3 seconds...", ephemeral=True)
+                        await asyncio.sleep(3)
+                        await ticket_channel.delete()
+
+                    close_modal.on_submit = close_submit
+                    await button_interaction.response.send_modal(close_modal)
+
+            view = CloseButton(modal_interaction.user)
+            await ticket_channel.send(embed=ticket_embed, view=view)
+
+            # Log ticket creation
             if STAFF_LOG_CHANNEL_ID:
                 log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
-                await log_channel.send(f"Ticket created by {interaction.user} in {ticket_channel.mention}")
-            await modal_interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+                await log_channel.send(f"Ticket created by {modal_interaction.user} in {ticket_channel.mention}")
+
+            await modal_interaction.response.send_message(
+                f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True
+            )
 
         modal.on_submit = modal_callback
         await interaction.response.send_modal(modal)
@@ -439,40 +487,8 @@ async def ticketbutton(ctx):
     view = View(timeout=None)
     view.add_item(button)
     await channel.send(embed=embed, view=view)
-    await ctx.send("✓ Ticket button sent!", delete_after=3)
+    await ctx.send("✅ Ticket button sent!", delete_after=3)
 
-@bot.command()
-async def close(ctx):
-    staff_role = ctx.guild.get_role(STAFF_ROLE_ID)
-    if staff_role not in ctx.author.roles:
-        await ctx.send("❌ You don't have permission to close tickets.")
-        return
-    
-    if not ctx.channel.category or ctx.channel.category.id != TICKET_CATEGORY_ID:
-        await ctx.send("❌ This command can only be used in a ticket channel.")
-        return
-    
-    await ctx.send("🔒 Closing ticket in 3 seconds...")
-    
-    if STAFF_LOG_CHANNEL_ID:
-        try:
-            log_channel = ctx.guild.get_channel(STAFF_LOG_CHANNEL_ID)
-            messages = [m async for m in ctx.channel.history(limit=100)]
-            history_text = "\n".join([f"{m.author}: {m.content}" for m in reversed(messages)])
-            await log_channel.send(f"Ticket {ctx.channel.name} closed by {ctx.author}. History:\n```{history_text[:1900]}```")
-        except:
-            pass
-    
-    if ctx.channel.id in ticket_last_activity:
-        del ticket_last_activity[ctx.channel.id]
-    if ctx.channel.id in ticket_warnings_sent:
-        del ticket_warnings_sent[ctx.channel.id]
-    
-    await asyncio.sleep(3)
-    try:
-        await ctx.channel.delete()
-    except:
-        pass
 
 @bot.command()
 async def timeout(ctx, member: discord.Member, duration: int, *, reason: str = "No reason provided"):
@@ -1765,5 +1781,6 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
 
 
