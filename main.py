@@ -389,6 +389,8 @@ async def type(ctx, channel: discord.TextChannel, *, message):
     await channel.send(message)
     await ctx.send(f"✓ Message sent to {channel.mention}!", delete_after=3)
 
+from datetime import datetime, timezone
+
 # ----- TICKET BUTTON COMMAND -----
 @bot.command()
 async def ticketbutton(ctx):
@@ -407,9 +409,12 @@ async def ticketbutton(ctx):
         modal.add_item(reason_input)
 
         async def modal_callback(modal_interaction):
-            guild = interaction.guild
-            category = guild.get_channel(TICKET_CATEGORY_ID)
+            guild = modal_interaction.guild
             staff_role = guild.get_role(TICKET_STAFF_ROLE_ID)
+            category = guild.get_channel(TICKET_CATEGORY_ID)
+
+            # Defer response to avoid "Something went wrong"
+            await modal_interaction.response.defer(ephemeral=True)
 
             # Create ticket channel with restricted permissions
             overwrites = {
@@ -424,7 +429,7 @@ async def ticketbutton(ctx):
                 overwrites=overwrites
             )
 
-            ticket_last_activity[ticket_channel.id] = datetime.now()
+            ticket_last_activity[ticket_channel.id] = datetime.now(timezone.utc)
 
             # Embed inside the ticket
             ticket_embed = discord.Embed(
@@ -471,7 +476,7 @@ async def ticketbutton(ctx):
 
             view = CloseButton(modal_interaction.user)
 
-            # ✅ Send ticket with embed + ping staff role + Close Ticket button
+            # Send ticket embed + staff ping + Close button
             await ticket_channel.send(
                 content=f"<@&{STAFF_ROLE_ID}> {modal_interaction.user.mention} created a ticket!",
                 embed=ticket_embed,
@@ -483,7 +488,8 @@ async def ticketbutton(ctx):
                 log_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
                 await log_channel.send(f"Ticket created by {modal_interaction.user} in {ticket_channel.mention}")
 
-            await modal_interaction.response.send_message(
+            # Notify user that ticket was created
+            await modal_interaction.followup.send(
                 f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True
             )
 
@@ -1787,6 +1793,7 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
 
 
 
