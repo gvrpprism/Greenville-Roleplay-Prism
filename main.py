@@ -389,6 +389,7 @@ async def type(ctx, channel: discord.TextChannel, *, message):
     await channel.send(message)
     await ctx.send(f"✓ Message sent to {channel.mention}!", delete_after=3)
 
+# ----- TICKET BUTTON COMMAND -----
 @bot.command()
 async def ticketbutton(ctx):
     """Send the 'Create Ticket' button to TICKET_CHANNEL_ID"""
@@ -428,7 +429,7 @@ async def ticketbutton(ctx):
             # Embed inside the ticket
             ticket_embed = discord.Embed(
                 title="🎫 Ticket Created",
-                description=f"{modal_interaction.user.mention} created this ticket.\nReason: **{reason_input.value}**",
+                description=f"Reason: **{reason_input.value}**",
                 color=discord.Color.orange()
             )
 
@@ -469,7 +470,13 @@ async def ticketbutton(ctx):
                     await button_interaction.response.send_modal(close_modal)
 
             view = CloseButton(modal_interaction.user)
-            await ticket_channel.send(embed=ticket_embed, view=view)
+
+            # ✅ Send ticket with embed + ping staff role + Close Ticket button
+            await ticket_channel.send(
+                content=f"<@&{STAFF_ROLE_ID}> {modal_interaction.user.mention} created a ticket!",
+                embed=ticket_embed,
+                view=view
+            )
 
             # Log ticket creation
             if STAFF_LOG_CHANNEL_ID:
@@ -488,7 +495,6 @@ async def ticketbutton(ctx):
     view.add_item(button)
     await channel.send(embed=embed, view=view)
     await ctx.send("✅ Ticket button sent!", delete_after=3)
-
 
 @bot.command()
 async def timeout(ctx, member: discord.Member, duration: int, *, reason: str = "No reason provided"):
@@ -1781,6 +1787,7 @@ if not TOKEN:
     print("Error: No bot token found. Please add DISCORD_BOT_TOKEN to Secrets.")
 else:
     bot.run(TOKEN)
+
 
 
 
